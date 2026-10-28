@@ -1079,7 +1079,7 @@
 		let sent = 0;
 		try {
 			for (const b of branches) {
-				const row = [makeId('R'), b, eventId, name, type, type === 'activity' ? (threshold || 0) : threshold,
+				const row = [makeId('R'), "'" + b, eventId, name, type, type === 'activity' ? (threshold || 0) : threshold,
 					sku, giftId, qty, $('rfStack').checked, limit, toSheetDate(start), toSheetDate(end)];
 				await api('submitRule', { ruleTail: JSON.stringify(row).slice(1, -1), giftTail: sent === 0 ? giftTail : '' });
 				sent++;
