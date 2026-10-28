@@ -524,6 +524,15 @@
 	function setBottom(html) {
 		$('bottomInner').innerHTML = html;
 		$('bottomBar').style.display = html ? 'block' : 'none';
+		fitBottomPadding();
+	}
+
+	function fitBottomPadding() {
+		requestAnimationFrame(() => {
+			const bar = $('bottomBar');
+			const hgt = bar.style.display === 'none' ? 0 : bar.offsetHeight;
+			document.querySelector('main').style.paddingBottom = (hgt + 24) + 'px';
+		});
 	}
 
 	/* ---------- API (Make webhook) ---------- */
@@ -918,6 +927,7 @@
 			$('btnApprove').addEventListener('click', openApprove);
 			$('btnRuleReview').addEventListener('click', openRuleReview);
 		}
+		fitBottomPadding();
 		$('btnAnalyze').addEventListener('click', analyze);
 		$('btnHistory').addEventListener('click', openHistory);
 		updateFormButton();
