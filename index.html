@@ -314,6 +314,11 @@
 				<input type="text" id="rfGiftName" autocomplete="off">
 				<label class="field" for="rfGiftHint">ลักษณะ (ให้ AI ใช้นับ เช่น สี รูปทรง โลโก้)</label>
 				<input type="text" id="rfGiftHint" autocomplete="off">
+				<label class="btn secondary" style="margin-top:8px;text-align:center" id="rfGiftPhotoBtn">
+					📷 ถ่ายรูปของแถมให้ AI เขียนลักษณะ
+					<input type="file" accept="image/*" capture="environment" id="rfGiftPhoto" style="display:none">
+				</label>
+				<div class="tip">ถ่ายของ 1 ชิ้นบนพื้นเรียบ เห็นโลโก้ชัด แล้วแก้ข้อความที่ได้ต่อได้</div>
 				<label class="field" for="rfGiftCost">ต้นทุนต่อชิ้น (บาท)</label>
 				<input type="number" id="rfGiftCost" inputmode="decimal" min="0">
 			</div>
@@ -1454,6 +1459,33 @@
 		} catch (e) {
 			showStockScreen();
 			showError(e.message);
+		}
+	});
+
+	/* ---------- Gift description from photo ---------- */
+
+	$('rfGiftPhoto').addEventListener('change', async (ev) => {
+		const file = ev.target.files && ev.target.files[0];
+		ev.target.value = '';
+		if (!file) return;
+		showError('');
+		const btn = $('rfGiftPhotoBtn');
+		const original = btn.firstChild.textContent;
+		btn.firstChild.textContent = ' AI กำลังดูรูป... ';
+		try {
+			const dataUrl = await resizeImage(file, 768);
+			const name = noFormula($('rfGiftName').value) || 'ไม่ระบุชื่อ';
+			const data = await api('describeGift', {
+				giftName: JSON.stringify('Item name: ' + name),
+				giftImage: dataUrl.split(',')[1],
+			});
+			const desc = data.ai && data.ai.description ? String(data.ai.description).trim() : '';
+			if (Number(data.aiStatus) !== 200 || !desc) throw new Error('AI อ่านรูปไม่สำเร็จ ลองถ่ายใหม่หรือพิมพ์เอง');
+			$('rfGiftHint').value = noFormula(desc);
+		} catch (e) {
+			showError(e.message);
+		} finally {
+			btn.firstChild.textContent = original;
 		}
 	});
 
