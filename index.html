@@ -233,6 +233,23 @@
 		</div>
 	</section>
 
+	<!-- Rejected -->
+	<section class="screen" id="scrRejected">
+		<div class="center">
+			<div class="big-icon">⛔</div>
+			<h2>ไม่ได้รับอนุมัติ</h2>
+			<p class="muted">กรุณาติดต่อผู้ดูแลระบบ</p>
+		</div>
+	</section>
+
+	<!-- Approve (admin) -->
+	<section class="screen" id="scrApprove">
+		<div class="card">
+			<h2>รออนุมัติ</h2>
+			<div id="approveList"></div>
+		</div>
+	</section>
+
 	<!-- Form -->
 	<section class="screen" id="scrForm">
 		<div class="card">
@@ -384,6 +401,8 @@
 		gifts: {},
 		history: [],
 		histScope: 'all',
+		role: '',
+		pendingStaff: [],
 	};
 
 	const $ = (id) => document.getElementById(id);
@@ -657,8 +676,9 @@
 			show('scrRegister');
 			return;
 		}
+		state.role = String(data.role || '').toLowerCase();
 		if (data.status === 'pending') {
-			show('scrPending');
+			show(state.role === 'rejected' ? 'scrRejected' : 'scrPending');
 			return;
 		}
 		state.staff = { staffName: data.staffName };
@@ -797,9 +817,82 @@
 			'<button class="btn" id="btnAnalyze">ตรวจสอบ</button>'
 			+ '<button class="btn secondary" id="btnHistory">ดูรายการที่บันทึก</button>'
 		);
+		if (state.role === 'admin') {
+			$('bottomInner').insertAdjacentHTML('beforeend', '<button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button>');
+			$('btnApprove').addEventListener('click', openApprove);
+		}
 		$('btnAnalyze').addEventListener('click', analyze);
 		$('btnHistory').addEventListener('click', openHistory);
 		updateFormButton();
+	}
+
+	/* ---------- Approve users (admin) ---------- */
+
+	function showApproveScreen() {
+		show('scrApprove');
+		setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+		$('btnBack').addEventListener('click', showFormScreen);
+	}
+
+	function fmtRegistered(v) {
+		if (typeof v === 'number') return serialToDisplay(v);
+		return String(v || '');
+	}
+
+	async function openApprove() {
+		showError('');
+		setLoading('กำลังโหลดรายชื่อ...');
+		try {
+			const data = await api('pending');
+			const rows = Array.isArray(data.staff) ? data.staff : [];
+			state.pendingStaff = rows
+				.map((r) => ({
+					userId: r[0] || '', empId: r[1] || '', name: r[2] || '', team: r[3] || '',
+					active: isTrue(r[4]), registeredAt: r[5], role: String(r[6] || '').toLowerCase(),
+				}))
+				.filter((o) => o.userId && !o.active && o.role !== 'rejected')
+				.reverse();
+			renderApprove();
+			showApproveScreen();
+		} catch (e) {
+			showFormScreen();
+			showError(e.message);
+		}
+	}
+
+	function renderApprove() {
+		const list = state.pendingStaff;
+		if (!list.length) {
+			$('approveList').innerHTML = '<div class="muted">ไม่มีผู้รออนุมัติ</div>';
+			return;
+		}
+		$('approveList').innerHTML = list.map((o) => '<div class="hist-item">'
+			+ '<div class="hist-title">' + esc(o.name) + '</div>'
+			+ '<div class="hist-meta">รหัส ' + esc(o.empId) + ' · ทีม ' + esc(o.team) + '</div>'
+			+ '<div class="hist-meta">ลงทะเบียน ' + esc(fmtRegistered(o.registeredAt)) + '</div>'
+			+ '<div class="chips" style="margin-top:8px">'
+			+ '<button type="button" class="chip selected" data-id="' + esc(o.userId) + '" data-d="approve">อนุมัติ</button>'
+			+ '<button type="button" class="btn-del" data-id="' + esc(o.userId) + '" data-d="reject">ปฏิเสธ</button>'
+			+ '</div></div>').join('');
+		$('approveList').querySelectorAll('[data-d]').forEach((el) => {
+			el.addEventListener('click', () => decide(el.dataset.id, el.dataset.d));
+		});
+	}
+
+	async function decide(userId, decision) {
+		const o = state.pendingStaff.find((x) => x.userId === userId);
+		const label = decision === 'approve' ? 'อนุมัติ' : 'ปฏิเสธ';
+		if (!confirm(label + ' ' + (o ? o.name : '') + '?')) return;
+		setLoading('กำลังบันทึก...');
+		try {
+			await api('approve', { targetUserId: userId, decision });
+			state.pendingStaff = state.pendingStaff.filter((x) => x.userId !== userId);
+			renderApprove();
+			showApproveScreen();
+		} catch (e) {
+			showApproveScreen();
+			showError(e.message);
+		}
 	}
 
 	/* ---------- History (เห็นทุกคน, ลบได้เฉพาะของตัวเอง) ---------- */
