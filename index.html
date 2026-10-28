@@ -65,7 +65,7 @@
 		border-radius: 10px;
 		background: #fff;
 	}
-	input[type=number], input[type=datetime-local], select {
+	input[type=number], input[type=date], select {
 		width: 100%;
 		font: inherit;
 		padding: 12px;
@@ -318,10 +318,11 @@
 		</div>
 		<div class="card">
 			<h2>ช่วงเวลา</h2>
-			<label class="field" for="rfStart">เริ่ม</label>
-			<input type="datetime-local" id="rfStart">
-			<label class="field" for="rfEnd">สิ้นสุด</label>
-			<input type="datetime-local" id="rfEnd">
+			<div class="muted">ใช้ได้ตั้งแต่ต้นวันที่เริ่ม จนจบวันที่สิ้นสุด</div>
+			<label class="field" for="rfStart">วันที่เริ่ม</label>
+			<input type="date" id="rfStart">
+			<label class="field" for="rfEnd">วันที่สิ้นสุด</label>
+			<input type="date" id="rfEnd">
 		</div>
 		<div class="card">
 			<h2>กติกาที่ฉันเสนอ</h2>
@@ -573,6 +574,11 @@
 		return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
 	}
 
+	function serialToDateDisplay(serial) {
+		const d = serialToDate(serial);
+		return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear();
+	}
+
 	function serialToDisplay(serial) {
 		const d = serialToDate(serial);
 		return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()
@@ -602,7 +608,7 @@
 		return ruleRows
 			.filter((r) => String(r.branch_code) !== ''
 				&& isTrue(r.is_approved)
-				&& Number(r.start_at) <= now && now <= Number(r.end_at))
+				&& Math.floor(Number(r.start_at)) <= now && now < Math.floor(Number(r.end_at)) + 1)
 			.map((r) => {
 				const g = gifts[String(r.gift_id)] || {};
 				return {
@@ -620,7 +626,7 @@
 					limitPerBill: Number(r.limit_per_bill) || 0,
 					startYmd: serialToYmd(r.start_at),
 					endYmd: serialToYmd(r.end_at),
-					endAt: serialToDisplay(r.end_at),
+					endAt: serialToDateDisplay(r.end_at),
 				};
 			});
 	}
@@ -962,8 +968,8 @@
 	}
 
 	function rulePeriod(r) {
-		const s = typeof r.start_at === 'number' ? serialToDisplay(r.start_at) : String(r.start_at || '');
-		const e = typeof r.end_at === 'number' ? serialToDisplay(r.end_at) : String(r.end_at || '');
+		const s = typeof r.start_at === 'number' ? serialToDateDisplay(r.start_at) : String(r.start_at || '');
+		const e = typeof r.end_at === 'number' ? serialToDateDisplay(r.end_at) : String(r.end_at || '');
 		return s + ' – ' + e;
 	}
 
@@ -1069,8 +1075,8 @@
 			showError('กรุณากรอก: ' + errors.join(', '));
 			return;
 		}
-		if (end <= start) {
-			showError('เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
+		if (end < start) {
+			showError('วันที่สิ้นสุดต้องไม่ก่อนวันที่เริ่ม');
 			return;
 		}
 
@@ -1082,7 +1088,7 @@
 				Number($('rfGiftCost').value) || 0]).slice(1, -1);
 		}
 		const eventId = noFormula($('rfEvent').value);
-		const toSheetDate = (v) => v.replace('T', ' ');
+		const toSheetDate = (v) => v;
 
 		if (!confirm('ส่งกติกา "' + name + '" ให้ ' + branches.length + ' สาขา?')) return;
 		setLoading('กำลังส่ง...');
