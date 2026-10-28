@@ -65,6 +65,21 @@
 		border-radius: 10px;
 		background: #fff;
 	}
+	input[type=number], input[type=datetime-local], select {
+		width: 100%;
+		font: inherit;
+		padding: 12px;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		background: #fff;
+		color: var(--text);
+	}
+	.row2 { display: flex; gap: 10px; }
+	.row2 > div { flex: 1; min-width: 0; }
+	.check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 15px; }
+	.mini-badge.pending { background: var(--amber-soft); color: var(--amber-text); }
+	.mini-badge.approved { background: var(--green-soft); color: var(--green-dark); }
+	.mini-badge.rejected { background: var(--red-soft); color: #9A1419; }
 	input[type=text]:focus { outline: 2px solid var(--green); border-color: transparent; }
 	.btn {
 		display: block;
@@ -250,6 +265,78 @@
 		</div>
 	</section>
 
+	<!-- Propose rule -->
+	<section class="screen" id="scrRuleForm">
+		<div class="card">
+			<h2>เสนอกติกาใหม่</h2>
+			<div class="muted">ส่งแล้วต้องรอ admin อนุมัติก่อน พนักงานถึงจะเลือกใช้ได้</div>
+			<label class="field" for="rfBranches">รหัสสาขา (หลายสาขาคั่นด้วย , )</label>
+			<input type="text" id="rfBranches" inputmode="numeric" autocomplete="off" placeholder="เช่น 1234, 5678">
+			<label class="field" for="rfName">ชื่อกติกา</label>
+			<input type="text" id="rfName" autocomplete="off" placeholder="เช่น ซื้อครบ 300 รับถุงผ้า">
+			<label class="field" for="rfEvent">ชื่องาน / รหัสงาน (ไม่บังคับ)</label>
+			<input type="text" id="rfEvent" autocomplete="off">
+			<label class="field" for="rfType">เงื่อนไข</label>
+			<select id="rfType">
+				<option value="min_spend">ซื้อครบยอด (บาท)</option>
+				<option value="sku_purchase">ซื้อสินค้าที่กำหนด (ชิ้น)</option>
+				<option value="activity">กิจกรรม / ไม่ต้องซื้อ</option>
+			</select>
+			<div class="row2">
+				<div>
+					<label class="field" for="rfThreshold" id="rfThresholdLabel">ยอดขั้นต่ำ (บาท)</label>
+					<input type="number" id="rfThreshold" inputmode="decimal" min="0">
+				</div>
+				<div id="rfSkuWrap" style="display:none">
+					<label class="field" for="rfSku">รหัสสินค้า (SKU)</label>
+					<input type="text" id="rfSku" autocomplete="off">
+				</div>
+			</div>
+		</div>
+		<div class="card">
+			<h2>ของแถม</h2>
+			<select id="rfGift"></select>
+			<div id="rfNewGift" style="display:none">
+				<label class="field" for="rfGiftName">ชื่อของแถม</label>
+				<input type="text" id="rfGiftName" autocomplete="off">
+				<label class="field" for="rfGiftHint">ลักษณะ (ให้ AI ใช้นับ เช่น สี รูปทรง โลโก้)</label>
+				<input type="text" id="rfGiftHint" autocomplete="off">
+				<label class="field" for="rfGiftCost">ต้นทุนต่อชิ้น (บาท)</label>
+				<input type="number" id="rfGiftCost" inputmode="decimal" min="0">
+			</div>
+			<div class="row2">
+				<div>
+					<label class="field" for="rfQty">ได้กี่ชิ้นต่อสิทธิ์</label>
+					<input type="number" id="rfQty" inputmode="numeric" min="1" value="1">
+				</div>
+				<div>
+					<label class="field" for="rfLimit">สูงสุดต่อบิล (เว้นว่าง = ไม่จำกัด)</label>
+					<input type="number" id="rfLimit" inputmode="numeric" min="0">
+				</div>
+			</div>
+			<label class="check"><input type="checkbox" id="rfStack"> ทบได้ (ซื้อ 2 เท่าได้ 2 สิทธิ์)</label>
+		</div>
+		<div class="card">
+			<h2>ช่วงเวลา</h2>
+			<label class="field" for="rfStart">เริ่ม</label>
+			<input type="datetime-local" id="rfStart">
+			<label class="field" for="rfEnd">สิ้นสุด</label>
+			<input type="datetime-local" id="rfEnd">
+		</div>
+		<div class="card">
+			<h2>กติกาที่ฉันเสนอ</h2>
+			<div id="myRules"></div>
+		</div>
+	</section>
+
+	<!-- Review rules (admin) -->
+	<section class="screen" id="scrRuleReview">
+		<div class="card">
+			<h2>กติการออนุมัติ</h2>
+			<div id="ruleReviewList"></div>
+		</div>
+	</section>
+
 	<!-- Form -->
 	<section class="screen" id="scrForm">
 		<div class="card">
@@ -403,6 +490,7 @@
 		histScope: 'all',
 		role: '',
 		pendingStaff: [],
+		ruleRows: [],
 	};
 
 	const $ = (id) => document.getElementById(id);
@@ -497,6 +585,7 @@
 
 	function buildRules(sheets) {
 		const ruleRows = rowsToObjects(sheets[0]);
+		state.ruleRows = ruleRows;
 		const gifts = {};
 		rowsToObjects(sheets[1]).forEach((g) => { gifts[String(g.gift_id)] = g; });
 		state.gifts = gifts;
@@ -817,13 +906,253 @@
 			'<button class="btn" id="btnAnalyze">ตรวจสอบ</button>'
 			+ '<button class="btn secondary" id="btnHistory">ดูรายการที่บันทึก</button>'
 		);
+		$('bottomInner').insertAdjacentHTML('beforeend', '<button class="btn secondary" id="btnPropose">เสนอกติกาใหม่</button>');
+		$('btnPropose').addEventListener('click', openRuleForm);
 		if (state.role === 'admin') {
-			$('bottomInner').insertAdjacentHTML('beforeend', '<button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button>');
+			const n = pendingRuleRows().length;
+			$('bottomInner').insertAdjacentHTML('beforeend',
+				'<div class="row2" style="margin-top:10px">'
+				+ '<div><button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button></div>'
+				+ '<div><button class="btn secondary" id="btnRuleReview">อนุมัติกติกา' + (n ? ' (' + n + ')' : '') + '</button></div>'
+				+ '</div>');
 			$('btnApprove').addEventListener('click', openApprove);
+			$('btnRuleReview').addEventListener('click', openRuleReview);
 		}
 		$('btnAnalyze').addEventListener('click', analyze);
 		$('btnHistory').addEventListener('click', openHistory);
 		updateFormButton();
+	}
+
+	/* ---------- Propose rule (ทุกคน) / Review rule (admin) ---------- */
+
+	const TYPE_LABEL = { min_spend: 'ซื้อครบยอด', sku_purchase: 'ซื้อสินค้าที่กำหนด', activity: 'กิจกรรม' };
+	const STATUS_LABEL = { pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ' };
+
+	function ruleStatus(r) {
+		if (isTrue(r.is_approved)) return 'approved';
+		return String(r.review_status || '') === 'rejected' ? 'rejected' : 'pending';
+	}
+
+	function pendingRuleRows() {
+		return state.ruleRows.filter((r) => r.rule_id && ruleStatus(r) === 'pending');
+	}
+
+	function giftLabel(id) {
+		const g = state.gifts[String(id)];
+		return g ? g.gift_name : String(id || '-');
+	}
+
+	function ruleSummary(r) {
+		const t = String(r.trigger_type);
+		let cond = TYPE_LABEL[t] || t;
+		if (t === 'min_spend') cond = 'ซื้อครบ ' + Number(r.threshold_value || 0).toLocaleString() + ' บาท';
+		if (t === 'sku_purchase') cond = 'ซื้อ SKU ' + (r.trigger_sku || '-') + ' ครบ ' + (r.threshold_value || 0) + ' ชิ้น';
+		const lim = Number(r.limit_per_bill) > 0 ? ' · สูงสุด ' + r.limit_per_bill + '/บิล' : '';
+		return cond + ' → ' + giftLabel(r.gift_id) + ' ' + (r.gift_qty || 1) + ' ชิ้น' + (isTrue(r.is_stackable) ? ' (ทบได้)' : '') + lim;
+	}
+
+	function rulePeriod(r) {
+		const s = typeof r.start_at === 'number' ? serialToDisplay(r.start_at) : String(r.start_at || '');
+		const e = typeof r.end_at === 'number' ? serialToDisplay(r.end_at) : String(r.end_at || '');
+		return s + ' – ' + e;
+	}
+
+	async function reloadData() {
+		const data = await api('init');
+		state.role = String(data.role || '').toLowerCase();
+		state.rules = buildRules(data.sheets || []);
+		renderBranchList();
+		const list = branchRules();
+		if (!list.find((r) => r.ruleId === state.ruleId)) state.ruleId = list.length === 1 ? list[0].ruleId : null;
+	}
+
+	function showRuleFormScreen() {
+		show('scrRuleForm');
+		setBottom('<button class="btn" id="btnSendRule">ส่งให้ admin อนุมัติ</button>'
+			+ '<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+		$('btnSendRule').addEventListener('click', sendRule);
+		$('btnBack').addEventListener('click', showFormScreen);
+	}
+
+	function renderGiftSelect() {
+		const gifts = Object.values(state.gifts).filter((g) => g.gift_id && isTrue(g.is_active === '' ? true : g.is_active));
+		$('rfGift').innerHTML = '<option value="">— เลือกของแถม —</option>'
+			+ gifts.map((g) => '<option value="' + esc(g.gift_id) + '">' + esc(g.gift_name) + '</option>').join('')
+			+ '<option value="__new__">+ ของแถมใหม่</option>';
+	}
+
+	function renderMyRules() {
+		const myId = state.profile ? state.profile.userId : '';
+		const mine = state.ruleRows.filter((r) => r.rule_id && r.created_by === myId).reverse();
+		if (!mine.length) {
+			$('myRules').innerHTML = '<div class="muted">ยังไม่เคยเสนอกติกา</div>';
+			return;
+		}
+		$('myRules').innerHTML = mine.slice(0, 50).map((r) => {
+			const st = ruleStatus(r);
+			return '<div class="hist-item">'
+				+ '<div class="hist-top"><div class="hist-title">' + esc(r.rule_name || r.rule_id) + '</div>'
+				+ '<span class="mini-badge ' + st + '">' + STATUS_LABEL[st] + '</span></div>'
+				+ '<div class="hist-meta">สาขา ' + esc(r.branch_code) + ' · ' + esc(ruleSummary(r)) + '</div>'
+				+ '<div class="hist-meta">' + esc(rulePeriod(r)) + '</div>'
+				+ '</div>';
+		}).join('');
+	}
+
+	function updateRuleFormFields() {
+		const t = $('rfType').value;
+		$('rfSkuWrap').style.display = t === 'sku_purchase' ? 'block' : 'none';
+		$('rfThresholdLabel').textContent = t === 'min_spend' ? 'ยอดขั้นต่ำ (บาท)' : t === 'sku_purchase' ? 'จำนวนชิ้นขั้นต่ำ' : 'เกณฑ์ (ไม่บังคับ)';
+		$('rfNewGift').style.display = $('rfGift').value === '__new__' ? 'block' : 'none';
+	}
+	$('rfType').addEventListener('change', updateRuleFormFields);
+	$('rfGift').addEventListener('change', updateRuleFormFields);
+
+	async function openRuleForm() {
+		showError('');
+		setLoading('กำลังโหลด...');
+		try {
+			await reloadData();
+		} catch (e) {
+			showError(e.message);
+		}
+		renderGiftSelect();
+		updateRuleFormFields();
+		if (!$('rfBranches').value) $('rfBranches').value = state.branchCode;
+		renderMyRules();
+		showRuleFormScreen();
+	}
+
+	function noFormula(s) {
+		return clean(s).replace(/^[=+\-@]+/, '');
+	}
+
+	function makeId(prefix) {
+		const d = serialToDate(nowSerial());
+		return prefix + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate())
+			+ pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds())
+			+ Math.random().toString(36).slice(2, 5).toUpperCase();
+	}
+
+	async function sendRule() {
+		showError('');
+		const branches = [...new Set($('rfBranches').value.split(/[,\s]+/).map((s) => noFormula(s)).filter(Boolean))];
+		const name = noFormula($('rfName').value);
+		const type = $('rfType').value;
+		const threshold = Number($('rfThreshold').value);
+		const sku = noFormula($('rfSku').value);
+		const giftSel = $('rfGift').value;
+		const qty = Math.max(1, parseInt($('rfQty').value, 10) || 1);
+		const limit = parseInt($('rfLimit').value, 10) || '';
+		const start = $('rfStart').value;
+		const end = $('rfEnd').value;
+
+		const errors = [];
+		if (!branches.length) errors.push('รหัสสาขา');
+		if (!name) errors.push('ชื่อกติกา');
+		if (type !== 'activity' && !(threshold > 0)) errors.push('เกณฑ์');
+		if (type === 'sku_purchase' && !sku) errors.push('รหัสสินค้า');
+		if (!giftSel) errors.push('ของแถม');
+		if (giftSel === '__new__' && !noFormula($('rfGiftName').value)) errors.push('ชื่อของแถมใหม่');
+		if (!start || !end) errors.push('ช่วงเวลา');
+		if (errors.length) {
+			showError('กรุณากรอก: ' + errors.join(', '));
+			return;
+		}
+		if (end <= start) {
+			showError('เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
+			return;
+		}
+
+		let giftId = giftSel;
+		let giftTail = '';
+		if (giftSel === '__new__') {
+			giftId = makeId('G');
+			giftTail = JSON.stringify([giftId, noFormula($('rfGiftName').value), noFormula($('rfGiftHint').value),
+				Number($('rfGiftCost').value) || 0]).slice(1, -1);
+		}
+		const eventId = noFormula($('rfEvent').value);
+		const toSheetDate = (v) => v.replace('T', ' ');
+
+		if (!confirm('ส่งกติกา "' + name + '" ให้ ' + branches.length + ' สาขา?')) return;
+		setLoading('กำลังส่ง...');
+		let sent = 0;
+		try {
+			for (const b of branches) {
+				const row = [makeId('R'), b, eventId, name, type, type === 'activity' ? (threshold || 0) : threshold,
+					sku, giftId, qty, $('rfStack').checked, limit, toSheetDate(start), toSheetDate(end)];
+				await api('submitRule', { ruleTail: JSON.stringify(row).slice(1, -1), giftTail: sent === 0 ? giftTail : '' });
+				sent++;
+			}
+			await reloadData();
+			['rfName', 'rfEvent', 'rfThreshold', 'rfSku', 'rfGiftName', 'rfGiftHint', 'rfGiftCost', 'rfLimit'].forEach((id) => { $(id).value = ''; });
+			renderGiftSelect();
+			updateRuleFormFields();
+			renderMyRules();
+			showRuleFormScreen();
+			alert('ส่งแล้ว ' + sent + ' กติกา รอ admin อนุมัติ');
+		} catch (e) {
+			showRuleFormScreen();
+			showError('ส่งได้ ' + sent + '/' + branches.length + ' สาขา: ' + e.message);
+		}
+	}
+
+	function showRuleReviewScreen() {
+		show('scrRuleReview');
+		setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+		$('btnBack').addEventListener('click', showFormScreen);
+	}
+
+	async function openRuleReview() {
+		showError('');
+		setLoading('กำลังโหลด...');
+		try {
+			await reloadData();
+		} catch (e) {
+			showError(e.message);
+		}
+		renderRuleReview();
+		showRuleReviewScreen();
+	}
+
+	function renderRuleReview() {
+		const list = pendingRuleRows().reverse();
+		if (!list.length) {
+			$('ruleReviewList').innerHTML = '<div class="muted">ไม่มีกติการออนุมัติ</div>';
+			return;
+		}
+		$('ruleReviewList').innerHTML = list.map((r) => '<div class="hist-item">'
+			+ '<div class="hist-title">' + esc(r.rule_name || r.rule_id) + '</div>'
+			+ '<div class="hist-meta">สาขา ' + esc(r.branch_code) + (r.event_id ? ' · งาน ' + esc(r.event_id) : '') + '</div>'
+			+ '<div class="hist-meta">' + esc(ruleSummary(r)) + '</div>'
+			+ '<div class="hist-meta">' + esc(rulePeriod(r)) + '</div>'
+			+ '<div class="hist-meta">เสนอโดย ' + esc(r.created_name || '-') + '</div>'
+			+ '<div class="chips" style="margin-top:8px">'
+			+ '<button type="button" class="chip selected" data-id="' + esc(r.rule_id) + '" data-d="approve">อนุมัติ</button>'
+			+ '<button type="button" class="btn-del" data-id="' + esc(r.rule_id) + '" data-d="reject">ไม่อนุมัติ</button>'
+			+ '</div></div>').join('');
+		$('ruleReviewList').querySelectorAll('[data-d]').forEach((el) => {
+			el.addEventListener('click', () => reviewRule(el.dataset.id, el.dataset.d));
+		});
+	}
+
+	async function reviewRule(ruleId, decision) {
+		const r = state.ruleRows.find((x) => String(x.rule_id) === String(ruleId));
+		if (!confirm((decision === 'approve' ? 'อนุมัติ' : 'ไม่อนุมัติ') + ' "' + (r ? r.rule_name : ruleId) + '"?')) return;
+		setLoading('กำลังบันทึก...');
+		try {
+			await api('reviewRule', { ruleId, decision });
+			if (r) {
+				r.is_approved = decision === 'approve';
+				r.review_status = decision === 'approve' ? 'approved' : 'rejected';
+			}
+			await reloadData();
+			renderRuleReview();
+			showRuleReviewScreen();
+		} catch (e) {
+			showRuleReviewScreen();
+			showError(e.message);
+		}
 	}
 
 	/* ---------- Approve users (admin) ---------- */
