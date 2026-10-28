@@ -302,11 +302,12 @@
 
 <script>
 	const CONFIG = {
-		LIFF_ID: '2012256232-pHAYoanA',
-		API_URL: 'https://script.google.com/a/macros/cjexpress.co.th/s/AKfycbz032S5y3LibaoQWIP_HiANlCNW_zJGeGbUOzIqXqVP79ajBhWPrgnZ7qpmNtwUpOB_/exec',
+		LIFF_ID: 'YOUR_LIFF_ID',
+		API_URL: 'https://hook.eu1.make.com/rmbk8qtfzlue5s4wj73rsma6fodukasi',
 		MAX_QTY: 50,
 		BILL_MAX_PX: 1600,
 		GIFT_MAX_PX: 1024,
+		TZ_OFFSET_HOURS: 7,
 	};
 
 	const REASONS = ['ลูกค้ารวมหลายบิล', 'ผู้จัดการอนุมัติ', 'อะลุ่มอล่วยให้ลูกค้า', 'อื่นๆ'];
@@ -322,6 +323,11 @@
 		below_threshold: 'ยอดไม่ถึงเกณฑ์',
 		over_entitlement: 'แจกเกินสิทธิ์',
 		outside_period: 'บิลนอกช่วงกิจกรรม',
+	};
+
+	const EMPTY_AI = {
+		bill: { readable: false, bill_no: null, total_amount: null, bill_date: null },
+		gift: { readable: false, item_count: null, matches_expected: null, note: '' },
 	};
 
 	const state = {
@@ -342,6 +348,10 @@
 
 	function esc(s) {
 		return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+	}
+
+	function clean(s) {
+		return String(s == null ? '' : s).replace(/["\\]/g, '').trim();
 	}
 
 	function show(screenId) {
@@ -367,15 +377,193 @@
 		$('bottomBar').style.display = html ? 'block' : 'none';
 	}
 
+	/* ---------- API (Make webhook) ---------- */
+
 	async function api(action, payload) {
-		const res = await fetch(CONFIG.API_URL, {
-			method: 'POST',
-			headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-			body: JSON.stringify(Object.assign({ action, idToken: state.idToken }, payload || {})),
-		});
-		const data = await res.json();
+		const params = new URLSearchParams();
+		params.append('action', action);
+		params.append('idToken', state.idToken);
+		Object.entries(payload || {}).forEach(([k, v]) => params.append(k, v == null ? '' : String(v)));
+		const res = await fetch(CONFIG.API_URL, { method: 'POST', body: params });
+		const text = await res.text();
+		let data;
+		try {
+			data = JSON.parse(text);
+		} catch (e) {
+			throw new Error('บัญชียังไม่ได้รับอนุมัติ หรือระบบตอบกลับผิดปกติ');
+		}
 		if (!data.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
 		return data;
+	}
+
+	/* ---------- Date helpers (Sheets serial number, เวลาไทย) ---------- */
+
+	function nowSerial() {
+		return Date.now() / 86400000 + 25569 + CONFIG.TZ_OFFSET_HOURS / 24;
+	}
+
+	function serialToDate(serial) {
+		return new Date(Math.round((Number(serial) - 25569) * 86400000));
+	}
+
+	function pad(n) {
+		return String(n).padStart(2, '0');
+	}
+
+	function serialToYmd(serial) {
+		const d = serialToDate(serial);
+		return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+	}
+
+	function serialToDisplay(serial) {
+		const d = serialToDate(serial);
+		return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear()
+			+ ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+	}
+
+	function isTrue(v) {
+		return v === true || String(v).toLowerCase() === 'true';
+	}
+
+	function rowsToObjects(range) {
+		const values = (range && range.values) || [];
+		if (!values.length) return [];
+		const headers = values[0];
+		return values.slice(1)
+			.filter((r) => r.some((c) => c !== '' && c != null))
+			.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] == null ? '' : r[i]])));
+	}
+
+	function buildRules(sheets, branchCode) {
+		const ruleRows = rowsToObjects(sheets[0]);
+		const gifts = {};
+		rowsToObjects(sheets[1]).forEach((g) => { gifts[String(g.gift_id)] = g; });
+		const now = nowSerial();
+		return ruleRows
+			.filter((r) => String(r.branch_code) === String(branchCode)
+				&& isTrue(r.is_approved)
+				&& Number(r.start_at) <= now && now <= Number(r.end_at))
+			.map((r) => {
+				const g = gifts[String(r.gift_id)] || {};
+				return {
+					ruleId: String(r.rule_id),
+					ruleName: String(r.rule_name || ''),
+					eventId: String(r.event_id || ''),
+					triggerType: String(r.trigger_type),
+					thresholdValue: Number(r.threshold_value) || 0,
+					giftId: String(r.gift_id),
+					giftName: String(g.gift_name || r.gift_id),
+					giftHint: String(g.gift_ai_hint || ''),
+					giftQty: Number(r.gift_qty) || 1,
+					isStackable: isTrue(r.is_stackable),
+					limitPerBill: Number(r.limit_per_bill) || 0,
+					startYmd: serialToYmd(r.start_at),
+					endYmd: serialToYmd(r.end_at),
+					endAt: serialToDisplay(r.end_at),
+				};
+			});
+	}
+
+	function currentRule() {
+		return state.rules.find((r) => r.ruleId === state.ruleId) || null;
+	}
+
+	/* ---------- Verify ชั้น 1 ---------- */
+
+	function normalizeBill(v) {
+		return String(v || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+	}
+
+	function calcEntitled(rule, amount) {
+		if (!rule.thresholdValue || rule.thresholdValue <= 0) return 0;
+		let units = Math.floor(amount / rule.thresholdValue);
+		if (!rule.isStackable) units = Math.min(units, 1);
+		let qty = units * (rule.giftQty || 1);
+		if (rule.limitPerBill > 0) qty = Math.min(qty, rule.limitPerBill);
+		return qty;
+	}
+
+	function prevQtyFromLog(log, rule, branchCode, billNo) {
+		if (!billNo || !Array.isArray(log) || log.length < 4) return 0;
+		const col = (i) => (log[i] && log[i].values && log[i].values[0]) || [];
+		const branches = col(0);
+		const rules = col(1);
+		const bills = col(2);
+		const qtys = col(3);
+		const key = normalizeBill(billNo);
+		let sum = 0;
+		for (let i = 0; i < bills.length; i++) {
+			if (String(branches[i]) === String(branchCode)
+				&& String(rules[i]) === String(rule.ruleId)
+				&& normalizeBill(bills[i]) === key) {
+				sum += Number(qtys[i]) || 0;
+			}
+		}
+		return sum;
+	}
+
+	function evaluate(rule, ai, billNo, qtyGiven, aiError, log) {
+		const ruleFlags = [];
+		const dataFlags = [];
+		const details = [];
+		let verifyPhoto;
+
+		if (aiError) {
+			dataFlags.push('ai_error');
+			details.push('AI ตรวจไม่สำเร็จ');
+		}
+		if (!billNo) {
+			dataFlags.push('bill_unreadable');
+			details.push('ไม่มีเลขที่บิล');
+		} else if (!ai.bill.readable) {
+			dataFlags.push('bill_unreadable');
+			details.push('AI อ่านบิลไม่ชัด');
+		}
+		if (ai.bill.bill_no && billNo && normalizeBill(ai.bill.bill_no) !== normalizeBill(billNo)) {
+			dataFlags.push('bill_no_edited');
+			details.push('แก้เลขบิลจาก ' + ai.bill.bill_no + ' เป็น ' + billNo);
+		}
+
+		if (!ai.gift.readable || ai.gift.item_count == null) {
+			verifyPhoto = 'needs_review';
+			dataFlags.push('gift_photo_unclear');
+			details.push('รูปของแถมไม่ชัด นับไม่ได้');
+		} else if (Number(ai.gift.item_count) !== Number(qtyGiven)) {
+			verifyPhoto = 'incorrect';
+			dataFlags.push('qty_mismatch');
+			details.push('กรอก ' + qtyGiven + ' ชิ้น แต่ AI นับได้ ' + ai.gift.item_count + ' ชิ้น');
+		} else {
+			verifyPhoto = 'correct';
+		}
+
+		if (ai.gift.matches_expected === false) {
+			ruleFlags.push('gift_mismatch');
+			details.push('ของแถมในรูปไม่ตรงกับกติกา');
+		}
+
+		const prevQty = prevQtyFromLog(log, rule, state.staff.branchCode, billNo);
+		if (prevQty > 0) {
+			ruleFlags.push('duplicate_bill');
+			details.push('บิลนี้เคยแจกแล้ว ' + prevQty + ' ชิ้น');
+		}
+
+		if (rule.triggerType === 'min_spend' && ai.bill.total_amount != null) {
+			const entitled = calcEntitled(rule, Number(ai.bill.total_amount));
+			if (entitled === 0) {
+				ruleFlags.push('below_threshold');
+				details.push('ยอดบิล ' + Number(ai.bill.total_amount).toLocaleString() + ' ไม่ถึงเกณฑ์ ' + rule.thresholdValue.toLocaleString());
+			} else if (qtyGiven + prevQty > entitled) {
+				ruleFlags.push('over_entitlement');
+				details.push('ได้สิทธิ์ ' + entitled + ' ชิ้น แต่แจกรวม ' + (qtyGiven + prevQty) + ' ชิ้น');
+			}
+		}
+
+		if (ai.bill.bill_date && (ai.bill.bill_date < rule.startYmd || ai.bill.bill_date > rule.endYmd)) {
+			ruleFlags.push('outside_period');
+			details.push('วันที่บนบิล ' + ai.bill.bill_date + ' อยู่นอกช่วงกิจกรรม');
+		}
+
+		return { verifyPhoto, ruleFlags, dataFlags, details };
 	}
 
 	/* ---------- Boot ---------- */
@@ -407,26 +595,26 @@
 			show('scrPending');
 			return;
 		}
-		state.staff = data.staff;
-		state.rules = data.rules || [];
+		state.staff = { staffName: data.staffName, branchCode: String(data.branchCode) };
+		state.rules = buildRules(data.sheets || [], state.staff.branchCode);
 		$('who').innerHTML = esc(state.staff.staffName) + '<br>สาขา ' + esc(state.staff.branchCode);
 		if (state.rules.length === 1) state.ruleId = state.rules[0].ruleId;
-		renderRules();
-		resetForm(true);
+		resetForm();
 	}
 
 	/* ---------- Register ---------- */
 
 	$('btnRegister').addEventListener('click', async () => {
-		const branchCode = $('regBranch').value.trim();
-		const staffName = $('regName').value.trim();
+		const branchCode = clean($('regBranch').value);
+		const staffName = clean($('regName').value);
 		if (!branchCode || !staffName) {
 			showError('กรุณากรอกรหัสสาขาและชื่อ');
 			return;
 		}
 		try {
 			setLoading('กำลังลงทะเบียน...');
-			await api('register', { branchCode, staffName, displayName: state.profile ? state.profile.displayName : '' });
+			const displayName = clean(state.profile ? state.profile.displayName : '');
+			await api('register', { regTail: JSON.stringify([displayName, staffName, branchCode]).slice(1, -1) });
 			show('scrPending');
 		} catch (e) {
 			show('scrRegister');
@@ -528,6 +716,13 @@
 		if (btn) btn.disabled = !(state.ruleId && state.billDataUrl && state.giftDataUrl);
 	}
 
+	function showFormScreen() {
+		show('scrForm');
+		setBottom('<button class="btn" id="btnAnalyze">ตรวจสอบ</button>');
+		$('btnAnalyze').addEventListener('click', analyze);
+		updateFormButton();
+	}
+
 	function resetForm() {
 		state.billDataUrl = null;
 		state.giftDataUrl = null;
@@ -537,32 +732,42 @@
 		setPhoto('billBox', null, '📷', 'แตะเพื่อถ่ายรูปบิล');
 		setPhoto('giftBox', null, '🎁', 'แตะเพื่อถ่ายรูปของแถม');
 		renderRules();
-		show('scrForm');
-		setBottom('<button class="btn" id="btnAnalyze" disabled>ตรวจสอบ</button>');
-		$('btnAnalyze').addEventListener('click', analyze);
-		updateFormButton();
+		showFormScreen();
 	}
 
 	/* ---------- Analyze ---------- */
 
 	async function analyze() {
 		if (state.busy) return;
+		const rule = currentRule();
+		if (!rule) return;
 		state.busy = true;
 		showError('');
 		setLoading('AI กำลังตรวจรูป...');
 		try {
+			const giftText = 'Expected giveaway: ' + rule.giftName + (rule.giftHint ? ' (' + rule.giftHint + ')' : '');
 			const data = await api('analyze', {
-				ruleId: state.ruleId,
-				qtyGiven: state.qty,
+				giftText: JSON.stringify(giftText),
 				billImage: state.billDataUrl.split(',')[1],
 				giftImage: state.giftDataUrl.split(',')[1],
 			});
-			state.analysis = data;
+			const aiError = Number(data.aiStatus) !== 200 || !data.ai;
+			const ai = aiError ? EMPTY_AI : data.ai;
+			const billNo = ai.bill.bill_no ? String(ai.bill.bill_no).replace(/\s+/g, '') : '';
+			state.analysis = {
+				rule,
+				ai,
+				aiError,
+				billNo,
+				qtyGiven: state.qty,
+				log: data.log || [],
+				billImageId: data.billImageId || '',
+				giftImageId: data.giftImageId || '',
+			};
+			state.analysis.evaluation = evaluate(rule, ai, billNo, state.qty, aiError, state.analysis.log);
 			renderResult();
 		} catch (e) {
-			show('scrForm');
-			setBottom('<button class="btn" id="btnAnalyze">ตรวจสอบ</button>');
-			$('btnAnalyze').addEventListener('click', analyze);
+			showFormScreen();
 			showError(e.message);
 		} finally {
 			state.busy = false;
@@ -572,7 +777,6 @@
 	function renderResult() {
 		const a = state.analysis;
 		const ev = a.evaluation;
-		const rule = state.rules.find((r) => r.ruleId === state.ruleId) || {};
 
 		const badge = $('photoBadge');
 		const badgeMap = {
@@ -584,7 +788,7 @@
 		badge.className = 'badge ' + b[0];
 		badge.textContent = b[1];
 
-		$('resRule').textContent = rule.ruleName || rule.ruleId || '-';
+		$('resRule').textContent = a.rule.ruleName || a.rule.ruleId;
 		$('resQty').textContent = a.qtyGiven + ' ชิ้น';
 		$('resQtyAi').textContent = a.ai.gift.item_count == null ? '-' : a.ai.gift.item_count + ' ชิ้น';
 		$('resTotal').textContent = a.ai.bill.total_amount == null ? '-' : Number(a.ai.bill.total_amount).toLocaleString() + ' บาท';
@@ -603,12 +807,7 @@
 			+ '<button class="btn secondary" id="btnRetake">ถ่ายใหม่</button>'
 		);
 		$('btnSubmit').addEventListener('click', submit);
-		$('btnRetake').addEventListener('click', () => {
-			show('scrForm');
-			setBottom('<button class="btn" id="btnAnalyze">ตรวจสอบ</button>');
-			$('btnAnalyze').addEventListener('click', analyze);
-			updateFormButton();
-		});
+		$('btnRetake').addEventListener('click', showFormScreen);
 	}
 
 	function renderFlags(ev) {
@@ -658,21 +857,39 @@
 			const other = $('reasonOther').value.trim();
 			reason = other ? 'อื่นๆ: ' + other : 'อื่นๆ';
 		}
+		const a = state.analysis;
+		const billNo = $('resBillNo').value.trim();
+		const ev = evaluate(a.rule, a.ai, billNo, a.qtyGiven, a.aiError, a.log);
+		const row = [
+			a.rule.ruleId,
+			a.rule.eventId,
+			a.rule.giftId,
+			a.ai.bill.bill_no || '',
+			billNo,
+			a.ai.bill.total_amount == null ? '' : a.ai.bill.total_amount,
+			a.ai.bill.bill_date || '',
+			a.qtyGiven,
+			a.ai.gift.item_count == null ? '' : a.ai.gift.item_count,
+			a.ai.gift.matches_expected == null ? '' : String(a.ai.gift.matches_expected),
+			ev.verifyPhoto,
+			ev.ruleFlags.join(','),
+			ev.dataFlags.join(','),
+			ev.details.join(' | '),
+			reason.slice(0, 200),
+			a.billImageId,
+			a.giftImageId,
+			JSON.stringify(a.ai).slice(0, 45000),
+		];
 		setLoading('กำลังบันทึก...');
 		try {
-			const data = await api('submit', {
-				analysisId: state.analysis.analysisId,
-				billNo: $('resBillNo').value.trim(),
-				reason,
-			});
-			const ev = data.evaluation;
+			await api('submit', { rowTail: JSON.stringify(row).slice(1, -1) });
 			const flagCount = ev.ruleFlags.length + ev.dataFlags.length;
 			$('doneText').textContent = flagCount
 				? 'บันทึกพร้อมข้อสังเกต ' + flagCount + ' รายการ'
 				: 'ไม่มีข้อสังเกต';
 			show('scrDone');
 			setBottom('<button class="btn" id="btnNext">แจกรายการถัดไป</button>');
-			$('btnNext').addEventListener('click', () => resetForm(true));
+			$('btnNext').addEventListener('click', resetForm);
 		} catch (e) {
 			showResultScreen();
 			showError(e.message);
