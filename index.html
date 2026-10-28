@@ -75,6 +75,17 @@
 		color: var(--text);
 	}
 	.row2 { display: flex; gap: 10px; }
+	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+	.grid2 .btn { margin: 0; padding: 10px 6px; font-size: 14px; }
+	.stock-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+	.stock-table th { text-align: right; color: var(--muted); font-weight: 500; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+	.stock-table th:first-child, .stock-table td:first-child { text-align: left; }
+	.stock-table td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+	.stock-table tr.total td { font-weight: 600; border-bottom: 0; }
+	.neg { color: var(--red); font-weight: 600; }
+	.stock-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+	.stock-row span { flex: 1; font-size: 14px; }
+	.stock-row input { width: 110px; }
 	.row2 > div { flex: 1; min-width: 0; }
 	.check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 15px; }
 	.mini-badge.pending { background: var(--amber-soft); color: var(--amber-text); }
@@ -317,6 +328,11 @@
 			<label class="check"><input type="checkbox" id="rfStack"> ทบได้ (ซื้อ 2 เท่าได้ 2 สิทธิ์)</label>
 		</div>
 		<div class="card">
+			<h2>สต็อกที่สาขาได้รับ (ไม่บังคับ)</h2>
+			<div class="muted">กรอกจำนวนของแถมที่ส่งไปแต่ละสาขา ระบบจะบันทึกเป็นยอดรับเข้า</div>
+			<div id="rfStockList"></div>
+		</div>
+		<div class="card">
 			<h2>ช่วงเวลา</h2>
 			<div class="muted">ใช้ได้ตั้งแต่ต้นวันที่เริ่ม จนจบวันที่สิ้นสุด</div>
 			<label class="field" for="rfStart">วันที่เริ่ม</label>
@@ -327,6 +343,41 @@
 		<div class="card">
 			<h2>กติกาที่ฉันเสนอ</h2>
 			<div id="myRules"></div>
+		</div>
+	</section>
+
+	<!-- Stock -->
+	<section class="screen" id="scrStock">
+		<div class="card">
+			<h2>สต็อกของแถมรายสาขา</h2>
+			<label class="field" for="stGiftFilter">ของแถม</label>
+			<select id="stGiftFilter"></select>
+			<label class="field" for="stBranchFilter">สาขา (เว้นว่าง = ทุกสาขา)</label>
+			<input type="text" id="stBranchFilter" list="branchList" autocomplete="off">
+		</div>
+		<div id="stockTables"></div>
+		<div class="card">
+			<h2>รับของเข้า / ปรับยอด</h2>
+			<label class="field" for="saBranch">รหัสสาขา</label>
+			<input type="text" id="saBranch" list="branchList" autocomplete="off">
+			<label class="field" for="saGift">ของแถม</label>
+			<select id="saGift"></select>
+			<div class="row2">
+				<div>
+					<label class="field" for="saType">ประเภท</label>
+					<select id="saType">
+						<option value="receive">รับเข้า (+)</option>
+						<option value="adjust">ปรับยอด (+/−)</option>
+					</select>
+				</div>
+				<div>
+					<label class="field" for="saQty">จำนวน</label>
+					<input type="number" id="saQty" inputmode="numeric">
+				</div>
+			</div>
+			<label class="field" for="saNote">หมายเหตุ</label>
+			<input type="text" id="saNote" autocomplete="off" placeholder="เช่น ของเสีย, นับจริงไม่ตรง">
+			<button class="btn" id="btnAddStock" style="margin-top:12px">บันทึกสต็อก</button>
 		</div>
 	</section>
 
@@ -492,6 +543,7 @@
 		role: '',
 		pendingStaff: [],
 		ruleRows: [],
+		stock: null,
 	};
 
 	const $ = (id) => document.getElementById(id);
@@ -917,19 +969,22 @@
 
 	function showFormScreen() {
 		show('scrForm');
+		const n = pendingRuleRows().length;
 		setBottom(
 			'<button class="btn" id="btnAnalyze">ตรวจสอบ</button>'
-			+ '<button class="btn secondary" id="btnHistory">ดูรายการที่บันทึก</button>'
+			+ '<div class="grid2">'
+			+ '<button class="btn secondary" id="btnHistory">รายการที่บันทึก</button>'
+			+ '<button class="btn secondary" id="btnStock">สต็อกของแถม</button>'
+			+ '<button class="btn secondary" id="btnPropose">เสนอกติกาใหม่</button>'
+			+ (state.role === 'admin'
+				? '<button class="btn secondary" id="btnRuleReview">อนุมัติกติกา' + (n ? ' (' + n + ')' : '') + '</button>'
+				+ '<button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button>'
+				: '')
+			+ '</div>'
 		);
-		$('bottomInner').insertAdjacentHTML('beforeend', '<button class="btn secondary" id="btnPropose">เสนอกติกาใหม่</button>');
 		$('btnPropose').addEventListener('click', openRuleForm);
+		$('btnStock').addEventListener('click', openStock);
 		if (state.role === 'admin') {
-			const n = pendingRuleRows().length;
-			$('bottomInner').insertAdjacentHTML('beforeend',
-				'<div class="row2" style="margin-top:10px">'
-				+ '<div><button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button></div>'
-				+ '<div><button class="btn secondary" id="btnRuleReview">อนุมัติกติกา' + (n ? ' (' + n + ')' : '') + '</button></div>'
-				+ '</div>');
 			$('btnApprove').addEventListener('click', openApprove);
 			$('btnRuleReview').addEventListener('click', openRuleReview);
 		}
@@ -1021,6 +1076,20 @@
 		$('rfThresholdLabel').textContent = t === 'min_spend' ? 'ยอดขั้นต่ำ (บาท)' : t === 'sku_purchase' ? 'จำนวนชิ้นขั้นต่ำ' : 'เกณฑ์ (ไม่บังคับ)';
 		$('rfNewGift').style.display = $('rfGift').value === '__new__' ? 'block' : 'none';
 	}
+	function parseBranches(v) {
+		return [...new Set(String(v || '').split(/[,\s]+/).map((s) => noFormula(s)).filter(Boolean))];
+	}
+
+	function renderStockInputs() {
+		const keep = {};
+		$('rfStockList').querySelectorAll('input[data-b]').forEach((el) => { keep[el.dataset.b] = el.value; });
+		const branches = parseBranches($('rfBranches').value);
+		$('rfStockList').innerHTML = branches.length
+			? branches.map((b) => '<div class="stock-row"><span>สาขา ' + esc(b) + '</span>'
+				+ '<input type="number" inputmode="numeric" min="0" data-b="' + esc(b) + '" value="' + esc(keep[b] || '') + '" placeholder="ชิ้น"></div>').join('')
+			: '<div class="muted" style="margin-top:8px">กรอกรหัสสาขาด้านบนก่อน</div>';
+	}
+	$('rfBranches').addEventListener('input', renderStockInputs);
 	$('rfType').addEventListener('change', updateRuleFormFields);
 	$('rfGift').addEventListener('change', updateRuleFormFields);
 
@@ -1035,6 +1104,7 @@
 		renderGiftSelect();
 		updateRuleFormFields();
 		if (!$('rfBranches').value) $('rfBranches').value = state.branchCode;
+		renderStockInputs();
 		renderMyRules();
 		showRuleFormScreen();
 	}
@@ -1052,7 +1122,12 @@
 
 	async function sendRule() {
 		showError('');
-		const branches = [...new Set($('rfBranches').value.split(/[,\s]+/).map((s) => noFormula(s)).filter(Boolean))];
+		const branches = parseBranches($('rfBranches').value);
+		const stockByBranch = {};
+		$('rfStockList').querySelectorAll('input[data-b]').forEach((el) => {
+			const q = parseInt(el.value, 10);
+			if (q > 0) stockByBranch[el.dataset.b] = q;
+		});
 		const name = noFormula($('rfName').value);
 		const type = $('rfType').value;
 		const threshold = Number($('rfThreshold').value);
@@ -1095,13 +1170,18 @@
 		let sent = 0;
 		try {
 			for (const b of branches) {
-				const row = [makeId('R'), "'" + b, eventId, name, type, type === 'activity' ? (threshold || 0) : threshold,
+				const ruleId = makeId('R');
+				const row = [ruleId, "'" + b, eventId, name, type, type === 'activity' ? (threshold || 0) : threshold,
 					sku, giftId, qty, $('rfStack').checked, limit, toSheetDate(start), toSheetDate(end)];
 				await api('submitRule', { ruleTail: JSON.stringify(row).slice(1, -1), giftTail: sent === 0 ? giftTail : '' });
+				if (stockByBranch[b]) {
+					await api('addStock', { stockTail: stockTail(b, giftId, 'receive', stockByBranch[b], 'กติกา ' + ruleId) });
+				}
 				sent++;
 			}
 			await reloadData();
 			['rfName', 'rfEvent', 'rfThreshold', 'rfSku', 'rfGiftName', 'rfGiftHint', 'rfGiftCost', 'rfLimit'].forEach((id) => { $(id).value = ''; });
+			$('rfStockList').querySelectorAll('input[data-b]').forEach((el) => { el.value = ''; });
 			renderGiftSelect();
 			updateRuleFormFields();
 			renderMyRules();
@@ -1170,6 +1250,122 @@
 			showError(e.message);
 		}
 	}
+
+	/* ---------- Stock (รับเข้า − แจกออก รายสาขา) ---------- */
+
+	function giftOptions(includeAll) {
+		const gifts = Object.values(state.gifts).filter((g) => g.gift_id);
+		return (includeAll ? '<option value="">ทุกของแถม</option>' : '<option value="">— เลือกของแถม —</option>')
+			+ gifts.map((g) => '<option value="' + esc(g.gift_id) + '">' + esc(g.gift_name) + '</option>').join('');
+	}
+
+	function showStockScreen() {
+		show('scrStock');
+		setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+		$('btnBack').addEventListener('click', showFormScreen);
+	}
+
+	async function loadStock() {
+		const data = await api('stock');
+		const r = data.data || [];
+		const col = (i) => (r[i] && r[i].values && r[i].values[0]) || [];
+		const sBranch = col(0), sGift = col(1), sType = col(2), sQty = col(3);
+		const gBranch = col(4), gGift = col(5), gQty = col(6), gDel = col(7);
+		const map = {};
+		const cell = (b, g) => {
+			const key = g + '|' + b;
+			if (!map[key]) map[key] = { branch: String(b), gift: String(g), received: 0, adjusted: 0, given: 0 };
+			return map[key];
+		};
+		for (let i = 0; i < sGift.length; i++) {
+			if (!sGift[i] || sBranch[i] === '' || sBranch[i] == null) continue;
+			const c = cell(sBranch[i], sGift[i]);
+			const q = Number(sQty[i]) || 0;
+			if (String(sType[i]) === 'adjust') c.adjusted += q; else c.received += q;
+		}
+		for (let i = 0; i < gGift.length; i++) {
+			if (!gGift[i] || gDel[i]) continue;
+			cell(gBranch[i], gGift[i]).given += Number(gQty[i]) || 0;
+		}
+		state.stock = Object.values(map);
+	}
+
+	async function openStock() {
+		showError('');
+		setLoading('กำลังโหลดสต็อก...');
+		try {
+			await loadStock();
+		} catch (e) {
+			showFormScreen();
+			showError(e.message);
+			return;
+		}
+		const keepGift = $('stGiftFilter').value;
+		$('stGiftFilter').innerHTML = giftOptions(true);
+		$('stGiftFilter').value = keepGift;
+		$('saGift').innerHTML = giftOptions(false);
+		if (!$('saBranch').value) $('saBranch').value = state.branchCode;
+		renderStock();
+		showStockScreen();
+	}
+
+	function renderStock() {
+		const giftF = $('stGiftFilter').value;
+		const branchF = $('stBranchFilter').value.trim();
+		const rows = (state.stock || []).filter((c) => (!giftF || c.gift === giftF) && (!branchF || c.branch === branchF));
+		if (!rows.length) {
+			$('stockTables').innerHTML = '<div class="card"><div class="muted">ยังไม่มีข้อมูลสต็อก</div></div>';
+			return;
+		}
+		const byGift = {};
+		rows.forEach((c) => { (byGift[c.gift] = byGift[c.gift] || []).push(c); });
+		$('stockTables').innerHTML = Object.keys(byGift).map((g) => {
+			const list = byGift[g].sort((a, b) => a.branch.localeCompare(b.branch));
+			const tot = list.reduce((s, c) => ({ in: s.in + c.received + c.adjusted, out: s.out + c.given }), { in: 0, out: 0 });
+			const tr = (label, inQ, outQ, cls) => {
+				const left = inQ - outQ;
+				return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + esc(label) + '</td><td>' + inQ.toLocaleString() + '</td><td>'
+					+ outQ.toLocaleString() + '</td><td class="' + (left < 0 ? 'neg' : '') + '">' + left.toLocaleString() + '</td></tr>';
+			};
+			return '<div class="card"><h2>' + esc(giftLabel(g)) + '</h2>'
+				+ '<table class="stock-table"><tr><th>สาขา</th><th>รับ</th><th>แจก</th><th>คงเหลือ</th></tr>'
+				+ list.map((c) => tr(c.branch, c.received + c.adjusted, c.given)).join('')
+				+ (list.length > 1 ? tr('รวม ' + list.length + ' สาขา', tot.in, tot.out, 'total') : '')
+				+ '</table></div>';
+		}).join('');
+	}
+	$('stGiftFilter').addEventListener('change', renderStock);
+	$('stBranchFilter').addEventListener('input', renderStock);
+
+	function stockTail(branch, giftId, type, qty, note) {
+		return JSON.stringify([makeId('S'), "'" + branch, giftId, type, qty, note]).slice(1, -1);
+	}
+
+	$('btnAddStock').addEventListener('click', async () => {
+		showError('');
+		const branch = noFormula($('saBranch').value);
+		const giftId = $('saGift').value;
+		const type = $('saType').value;
+		const qty = parseInt($('saQty').value, 10);
+		const note = noFormula($('saNote').value);
+		if (!branch || !giftId || !qty || (type === 'receive' && qty < 0)) {
+			showError('กรุณากรอกสาขา ของแถม และจำนวน (รับเข้าต้องเป็นค่าบวก)');
+			return;
+		}
+		if (!confirm((type === 'receive' ? 'รับเข้า ' : 'ปรับยอด ') + qty + ' ชิ้น ' + giftLabel(giftId) + ' สาขา ' + branch + '?')) return;
+		setLoading('กำลังบันทึก...');
+		try {
+			await api('addStock', { stockTail: stockTail(branch, giftId, type, qty, note) });
+			$('saQty').value = '';
+			$('saNote').value = '';
+			await loadStock();
+			renderStock();
+			showStockScreen();
+		} catch (e) {
+			showStockScreen();
+			showError(e.message);
+		}
+	});
 
 	/* ---------- Approve users (admin) ---------- */
 
