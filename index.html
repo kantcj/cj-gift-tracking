@@ -214,8 +214,12 @@
 		<div class="card">
 			<h2>ลงทะเบียนครั้งแรก</h2>
 			<div class="muted">กรอกครั้งเดียว เลือกสาขาได้ทุกครั้งที่แจก</div>
+			<label class="field" for="regEmpId">รหัสพนักงาน</label>
+			<input type="text" id="regEmpId" autocomplete="off">
 			<label class="field" for="regName">ชื่อ-นามสกุล</label>
 			<input type="text" id="regName" autocomplete="name">
+			<label class="field" for="regTeam">ทีม</label>
+			<input type="text" id="regTeam" autocomplete="off">
 		</div>
 		<button class="btn" id="btnRegister">ลงทะเบียน</button>
 	</section>
@@ -671,15 +675,16 @@
 	/* ---------- Register ---------- */
 
 	$('btnRegister').addEventListener('click', async () => {
+		const empId = clean($('regEmpId').value);
 		const staffName = clean($('regName').value);
-		if (!staffName) {
-			showError('กรุณากรอกชื่อ');
+		const team = clean($('regTeam').value);
+		if (!empId || !staffName || !team) {
+			showError('กรุณากรอกรหัสพนักงาน ชื่อ-นามสกุล และทีมให้ครบ');
 			return;
 		}
 		try {
 			setLoading('กำลังลงทะเบียน...');
-			const displayName = clean(state.profile ? state.profile.displayName : '');
-			await api('register', { regTail: JSON.stringify([displayName, staffName, '']).slice(1, -1) });
+			await api('register', { regTail: JSON.stringify([empId, staffName, team]).slice(1, -1) });
 			show('scrPending');
 		} catch (e) {
 			show('scrRegister');
