@@ -178,6 +178,17 @@
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
 	.big-icon { font-size: 56px; line-height: 1; margin-bottom: 8px; }
+	.seg { display: flex; gap: 8px; margin-bottom: 12px; }
+	.hist-item { border-bottom: 1px solid var(--line); padding: 10px 0; }
+	.hist-item:last-child { border-bottom: 0; }
+	.hist-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+	.hist-title { font-weight: 600; font-size: 15px; }
+	.hist-meta { font-size: 13px; color: var(--muted); }
+	.mini-badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; margin: 4px 4px 0 0; }
+	.mini-badge.rule { background: var(--red-soft); color: #9A1419; }
+	.mini-badge.data { background: var(--amber-soft); color: var(--amber-text); }
+	.mini-badge.mine { background: var(--green-soft); color: var(--green-dark); }
+	.btn-del { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--red); color: var(--red); background: #fff; cursor: pointer; white-space: nowrap; }
 	.error-box { background: var(--red-soft); color: #9A1419; padding: 12px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; display: none; }
 </style>
 </head>
@@ -202,9 +213,7 @@
 	<section class="screen" id="scrRegister">
 		<div class="card">
 			<h2>ลงทะเบียนครั้งแรก</h2>
-			<div class="muted">กรอกครั้งเดียว หลังจากนั้นระบบจะจำสาขาให้อัตโนมัติ</div>
-			<label class="field" for="regBranch">รหัสสาขา</label>
-			<input type="text" id="regBranch" inputmode="text" autocomplete="off">
+			<div class="muted">กรอกครั้งเดียว เลือกสาขาได้ทุกครั้งที่แจก</div>
 			<label class="field" for="regName">ชื่อ-นามสกุล</label>
 			<input type="text" id="regName" autocomplete="name">
 		</div>
@@ -222,6 +231,13 @@
 
 	<!-- Form -->
 	<section class="screen" id="scrForm">
+		<div class="card">
+			<h2>สาขา</h2>
+			<input type="text" id="branchInput" list="branchList" inputmode="numeric" autocomplete="off" placeholder="พิมพ์หรือเลือกรหัสสาขา">
+			<datalist id="branchList"></datalist>
+			<div class="tip">แสดงเฉพาะสาขาที่มีกติกาเปิดใช้งานวันนี้</div>
+		</div>
+
 		<div class="card">
 			<h2>1. กติกา</h2>
 			<div id="ruleList"></div>
@@ -286,6 +302,24 @@
 		</div>
 	</section>
 
+	<!-- History -->
+	<section class="screen" id="scrHistory">
+		<div class="card">
+			<div class="seg" id="histScope">
+				<button type="button" class="chip selected" data-scope="all">ทุกคน</button>
+				<button type="button" class="chip" data-scope="mine">ของฉัน</button>
+			</div>
+			<label class="field" for="histBranch">สาขา (เว้นว่าง = ทุกสาขา)</label>
+			<input type="text" id="histBranch" list="branchList" inputmode="numeric" autocomplete="off">
+			<label class="field" for="histDate">วันที่</label>
+			<input type="text" id="histDate" placeholder="dd/mm/yyyy (เว้นว่าง = ทั้งหมด)" autocomplete="off">
+		</div>
+		<div class="card">
+			<div class="muted" id="histSummary" style="margin-bottom:6px"></div>
+			<div id="histList"></div>
+		</div>
+	</section>
+
 	<!-- Done -->
 	<section class="screen" id="scrDone">
 		<div class="center">
@@ -335,6 +369,7 @@
 		profile: null,
 		staff: null,
 		rules: [],
+		branchCode: '',
 		ruleId: null,
 		qty: 1,
 		billDataUrl: null,
@@ -342,6 +377,9 @@
 		analysis: null,
 		reason: '',
 		busy: false,
+		gifts: {},
+		history: [],
+		histScope: 'all',
 	};
 
 	const $ = (id) => document.getElementById(id);
@@ -434,19 +472,21 @@
 			.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] == null ? '' : r[i]])));
 	}
 
-	function buildRules(sheets, branchCode) {
+	function buildRules(sheets) {
 		const ruleRows = rowsToObjects(sheets[0]);
 		const gifts = {};
 		rowsToObjects(sheets[1]).forEach((g) => { gifts[String(g.gift_id)] = g; });
+		state.gifts = gifts;
 		const now = nowSerial();
 		return ruleRows
-			.filter((r) => String(r.branch_code) === String(branchCode)
+			.filter((r) => String(r.branch_code) !== ''
 				&& isTrue(r.is_approved)
 				&& Number(r.start_at) <= now && now <= Number(r.end_at))
 			.map((r) => {
 				const g = gifts[String(r.gift_id)] || {};
 				return {
 					ruleId: String(r.rule_id),
+					branchCode: String(r.branch_code),
 					ruleName: String(r.rule_name || ''),
 					eventId: String(r.event_id || ''),
 					triggerType: String(r.trigger_type),
@@ -465,8 +505,28 @@
 	}
 
 	function currentRule() {
-		return state.rules.find((r) => r.ruleId === state.ruleId) || null;
+		return branchRules().find((r) => r.ruleId === state.ruleId) || null;
 	}
+
+	function branchRules() {
+		return state.rules.filter((r) => r.branchCode === state.branchCode);
+	}
+
+	function renderBranchList() {
+		const codes = [...new Set(state.rules.map((r) => r.branchCode))].sort();
+		$('branchList').innerHTML = codes.map((c) => '<option value="' + esc(c) + '"></option>').join('');
+	}
+
+	function setBranch(code) {
+		state.branchCode = String(code || '').trim();
+		try { localStorage.setItem('gift_branch', state.branchCode); } catch (e) {}
+		const list = branchRules();
+		state.ruleId = list.length === 1 ? list[0].ruleId : null;
+		renderRules();
+		updateFormButton();
+	}
+
+	$('branchInput').addEventListener('input', (ev) => setBranch(ev.target.value));
 
 	/* ---------- Verify ชั้น 1 ---------- */
 
@@ -490,9 +550,11 @@
 		const rules = col(1);
 		const bills = col(2);
 		const qtys = col(3);
+		const deleted = col(4);
 		const key = normalizeBill(billNo);
 		let sum = 0;
 		for (let i = 0; i < bills.length; i++) {
+			if (deleted[i]) continue;
 			if (String(branches[i]) === String(branchCode)
 				&& String(rules[i]) === String(rule.ruleId)
 				&& normalizeBill(bills[i]) === key) {
@@ -541,7 +603,7 @@
 			details.push('ของแถมในรูปไม่ตรงกับกติกา');
 		}
 
-		const prevQty = prevQtyFromLog(log, rule, state.staff.branchCode, billNo);
+		const prevQty = prevQtyFromLog(log, rule, rule.branchCode, billNo);
 		if (prevQty > 0) {
 			ruleFlags.push('duplicate_bill');
 			details.push('บิลนี้เคยแจกแล้ว ' + prevQty + ' ชิ้น');
@@ -595,26 +657,29 @@
 			show('scrPending');
 			return;
 		}
-		state.staff = { staffName: data.staffName, branchCode: String(data.branchCode) };
-		state.rules = buildRules(data.sheets || [], state.staff.branchCode);
-		$('who').innerHTML = esc(state.staff.staffName) + '<br>สาขา ' + esc(state.staff.branchCode);
-		if (state.rules.length === 1) state.ruleId = state.rules[0].ruleId;
+		state.staff = { staffName: data.staffName };
+		state.rules = buildRules(data.sheets || []);
+		$('who').textContent = state.staff.staffName;
+		renderBranchList();
+		let saved = '';
+		try { saved = localStorage.getItem('gift_branch') || ''; } catch (e) {}
+		$('branchInput').value = saved;
+		setBranch(saved);
 		resetForm();
 	}
 
 	/* ---------- Register ---------- */
 
 	$('btnRegister').addEventListener('click', async () => {
-		const branchCode = clean($('regBranch').value);
 		const staffName = clean($('regName').value);
-		if (!branchCode || !staffName) {
-			showError('กรุณากรอกรหัสสาขาและชื่อ');
+		if (!staffName) {
+			showError('กรุณากรอกชื่อ');
 			return;
 		}
 		try {
 			setLoading('กำลังลงทะเบียน...');
 			const displayName = clean(state.profile ? state.profile.displayName : '');
-			await api('register', { regTail: JSON.stringify([displayName, staffName, branchCode]).slice(1, -1) });
+			await api('register', { regTail: JSON.stringify([displayName, staffName, '']).slice(1, -1) });
 			show('scrPending');
 		} catch (e) {
 			show('scrRegister');
@@ -626,11 +691,16 @@
 
 	function renderRules() {
 		const box = $('ruleList');
-		if (!state.rules.length) {
-			box.innerHTML = '<div class="muted">ยังไม่มีกติกาที่เปิดใช้งานสำหรับสาขานี้</div>';
+		const list = branchRules();
+		if (!state.branchCode) {
+			box.innerHTML = '<div class="muted">เลือกสาขาก่อน</div>';
 			return;
 		}
-		box.innerHTML = state.rules.map((r) => {
+		if (!list.length) {
+			box.innerHTML = '<div class="muted">ไม่มีกติกาที่เปิดใช้งานสำหรับสาขา ' + esc(state.branchCode) + '</div>';
+			return;
+		}
+		box.innerHTML = list.map((r) => {
 			const cond = r.triggerType === 'min_spend'
 				? 'ซื้อครบ ' + r.thresholdValue.toLocaleString() + ' บาท'
 				: 'ซื้อสินค้าเงื่อนไข ' + r.thresholdValue + ' ชิ้น';
@@ -713,15 +783,126 @@
 
 	function updateFormButton() {
 		const btn = $('btnAnalyze');
-		if (btn) btn.disabled = !(state.ruleId && state.billDataUrl && state.giftDataUrl);
+		if (btn) btn.disabled = !(state.branchCode && currentRule() && state.billDataUrl && state.giftDataUrl);
 	}
 
 	function showFormScreen() {
 		show('scrForm');
-		setBottom('<button class="btn" id="btnAnalyze">ตรวจสอบ</button>');
+		setBottom(
+			'<button class="btn" id="btnAnalyze">ตรวจสอบ</button>'
+			+ '<button class="btn secondary" id="btnHistory">ดูรายการที่บันทึก</button>'
+		);
 		$('btnAnalyze').addEventListener('click', analyze);
+		$('btnHistory').addEventListener('click', openHistory);
 		updateFormButton();
 	}
+
+	/* ---------- History (เห็นทุกคน, ลบได้เฉพาะของตัวเอง) ---------- */
+
+	const LOG_COLS = ['redemption_id', 'redeemed_at', 'branch_code', 'line_user_id', 'staff_name', 'rule_id', 'event_id', 'gift_id',
+		'bill_no_ai', 'bill_no', 'bill_total_ai', 'bill_date_ai', 'qty_given', 'qty_ai', 'gift_match_ai',
+		'verify_photo', 'rule_flags', 'data_flags', 'flag_detail', 'reason', 'bill_image_id', 'gift_image_id'];
+
+	function todayDisplay() {
+		const d = serialToDate(nowSerial());
+		return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear();
+	}
+
+	function displayToIso(v) {
+		const m = String(v || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+		return m ? m[3] + '-' + pad(m[2]) + '-' + pad(m[1]) : '';
+	}
+
+	async function openHistory() {
+		showError('');
+		setLoading('กำลังโหลดรายการ...');
+		try {
+			const data = await api('list');
+			const ranges = data.log || [];
+			const main = (ranges[0] && ranges[0].values) || [];
+			const del = (ranges[1] && ranges[1].values) || [];
+			state.history = main.map((r, i) => {
+				const o = {};
+				LOG_COLS.forEach((c, j) => { o[c] = r[j] == null ? '' : r[j]; });
+				o.deleted_at = (del[i] && del[i][0]) || '';
+				return o;
+			}).filter((o) => o.redemption_id && !o.deleted_at).reverse();
+			if (!$('histDate').value) $('histDate').value = todayDisplay();
+			if (!$('histBranch').value) $('histBranch').value = state.branchCode;
+			renderHistory();
+			show('scrHistory');
+			setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+			$('btnBack').addEventListener('click', showFormScreen);
+		} catch (e) {
+			showFormScreen();
+			showError(e.message);
+		}
+	}
+
+	function renderHistory() {
+		const myId = state.profile ? state.profile.userId : '';
+		const branch = $('histBranch').value.trim();
+		const dateIso = displayToIso($('histDate').value);
+		const rows = state.history.filter((o) =>
+			(state.histScope === 'all' || o.line_user_id === myId)
+			&& (!branch || String(o.branch_code) === branch)
+			&& (!dateIso || String(o.redeemed_at).slice(0, 10) === dateIso));
+
+		const totalQty = rows.reduce((s, o) => s + (Number(o.qty_given) || 0), 0);
+		$('histSummary').textContent = rows.length + ' รายการ · แจกรวม ' + totalQty + ' ชิ้น';
+
+		if (!rows.length) {
+			$('histList').innerHTML = '<div class="muted">ไม่มีรายการ</div>';
+			return;
+		}
+		$('histList').innerHTML = rows.slice(0, 200).map((o) => {
+			const mine = o.line_user_id === myId;
+			const gift = state.gifts[String(o.gift_id)];
+			const flags = []
+				.concat(String(o.rule_flags || '').split(',').filter(Boolean).map((f) => '<span class="mini-badge rule">' + esc(FLAG_LABEL[f] || f) + '</span>'))
+				.concat(String(o.data_flags || '').split(',').filter(Boolean).map((f) => '<span class="mini-badge data">' + esc(FLAG_LABEL[f] || f) + '</span>'));
+			return '<div class="hist-item">'
+				+ '<div class="hist-top">'
+				+ '<div class="hist-title">' + esc(gift ? gift.gift_name : o.gift_id) + ' × ' + esc(o.qty_given) + '</div>'
+				+ (mine ? '<button type="button" class="btn-del" data-id="' + esc(o.redemption_id) + '">ลบ</button>' : '')
+				+ '</div>'
+				+ '<div class="hist-meta">สาขา ' + esc(o.branch_code) + ' · บิล ' + esc(o.bill_no || '-') + ' · ' + esc(String(o.redeemed_at).slice(11, 16)) + '</div>'
+				+ '<div class="hist-meta">' + esc(o.staff_name) + (mine ? ' <span class="mini-badge mine">ของฉัน</span>' : '') + '</div>'
+				+ (flags.length ? '<div>' + flags.join('') + '</div>' : '')
+				+ '</div>';
+		}).join('');
+		$('histList').querySelectorAll('.btn-del').forEach((el) => {
+			el.addEventListener('click', () => deleteEntry(el.dataset.id));
+		});
+	}
+
+	async function deleteEntry(id) {
+		if (!confirm('ลบรายการนี้? (ระบบจะเก็บประวัติการลบไว้)')) return;
+		setLoading('กำลังลบ...');
+		try {
+			await api('delete', { redemptionId: id });
+			state.history = state.history.filter((o) => o.redemption_id !== id);
+			renderHistory();
+			show('scrHistory');
+			setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+			$('btnBack').addEventListener('click', showFormScreen);
+		} catch (e) {
+			show('scrHistory');
+			setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+			$('btnBack').addEventListener('click', showFormScreen);
+			showError('ลบไม่สำเร็จ: ลบได้เฉพาะรายการของตัวเอง');
+		}
+	}
+
+	$('histScope').querySelectorAll('.chip').forEach((el) => {
+		el.addEventListener('click', () => {
+			state.histScope = el.dataset.scope;
+			$('histScope').querySelectorAll('.chip').forEach((c) => c.classList.toggle('selected', c === el));
+			renderHistory();
+		});
+	});
+	$('histBranch').addEventListener('input', renderHistory);
+	$('histDate').addEventListener('input', renderHistory);
 
 	function resetForm() {
 		state.billDataUrl = null;
@@ -747,6 +928,7 @@
 		try {
 			const giftText = 'Expected giveaway: ' + rule.giftName + (rule.giftHint ? ' (' + rule.giftHint + ')' : '');
 			const data = await api('analyze', {
+				branchCode: rule.branchCode,
 				giftText: JSON.stringify(giftText),
 				billImage: state.billDataUrl.split(',')[1],
 				giftImage: state.giftDataUrl.split(',')[1],
@@ -788,7 +970,7 @@
 		badge.className = 'badge ' + b[0];
 		badge.textContent = b[1];
 
-		$('resRule').textContent = a.rule.ruleName || a.rule.ruleId;
+		$('resRule').textContent = 'สาขา ' + a.rule.branchCode + ' · ' + (a.rule.ruleName || a.rule.ruleId);
 		$('resQty').textContent = a.qtyGiven + ' ชิ้น';
 		$('resQtyAi').textContent = a.ai.gift.item_count == null ? '-' : a.ai.gift.item_count + ' ชิ้น';
 		$('resTotal').textContent = a.ai.bill.total_amount == null ? '-' : Number(a.ai.bill.total_amount).toLocaleString() + ' บาท';
@@ -882,7 +1064,7 @@
 		];
 		setLoading('กำลังบันทึก...');
 		try {
-			await api('submit', { rowTail: JSON.stringify(row).slice(1, -1) });
+			await api('submit', { branchCode: a.rule.branchCode, rowTail: JSON.stringify(row).slice(1, -1) });
 			const flagCount = ev.ruleFlags.length + ev.dataFlags.length;
 			$('doneText').textContent = flagCount
 				? 'บันทึกพร้อมข้อสังเกต ' + flagCount + ' รายการ'
