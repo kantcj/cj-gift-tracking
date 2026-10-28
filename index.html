@@ -281,8 +281,10 @@
 		<div class="card">
 			<h2>เสนอกติกาใหม่</h2>
 			<div class="muted">ส่งแล้วต้องรอ admin อนุมัติก่อน พนักงานถึงจะเลือกใช้ได้</div>
-			<label class="field" for="rfBranches">รหัสสาขา (หลายสาขาคั่นด้วย , )</label>
-			<input type="text" id="rfBranches" inputmode="numeric" autocomplete="off" placeholder="เช่น 1234, 5678">
+			<label class="field" for="rfBranchPick">เลือกสาขา (พิมพ์รหัสหรือชื่อ แล้วเลือกจากรายการ)</label>
+			<input type="text" id="rfBranchPick" list="branchMasterList" autocomplete="off" placeholder="เช่น 0002 หรือ ท่าวัด">
+			<label class="field" for="rfBranches">สาขาที่เลือก (คั่นด้วย , )</label>
+			<input type="text" id="rfBranches" autocomplete="off">
 			<label class="field" for="rfName">ชื่อกติกา</label>
 			<input type="text" id="rfName" autocomplete="off" placeholder="เช่น ซื้อครบ 300 รับถุงผ้า">
 			<label class="field" for="rfEvent">ชื่องาน / รหัสงาน (ไม่บังคับ)</label>
@@ -353,13 +355,13 @@
 			<label class="field" for="stGiftFilter">ของแถม</label>
 			<select id="stGiftFilter"></select>
 			<label class="field" for="stBranchFilter">สาขา (เว้นว่าง = ทุกสาขา)</label>
-			<input type="text" id="stBranchFilter" list="branchList" autocomplete="off">
+			<input type="text" id="stBranchFilter" list="branchMasterList" autocomplete="off">
 		</div>
 		<div id="stockTables"></div>
 		<div class="card">
 			<h2>รับของเข้า / ปรับยอด</h2>
 			<label class="field" for="saBranch">รหัสสาขา</label>
-			<input type="text" id="saBranch" list="branchList" autocomplete="off">
+			<input type="text" id="saBranch" list="branchMasterList" autocomplete="off" placeholder="พิมพ์รหัสหรือชื่อสาขา">
 			<label class="field" for="saGift">ของแถม</label>
 			<select id="saGift"></select>
 			<div class="row2">
@@ -381,6 +383,29 @@
 		</div>
 	</section>
 
+	<!-- Branches (admin) -->
+	<section class="screen" id="scrBranches">
+		<div class="card">
+			<h2>เพิ่มสาขา</h2>
+			<div class="row2">
+				<div>
+					<label class="field" for="nbCode">รหัสสาขา</label>
+					<input type="text" id="nbCode" autocomplete="off" placeholder="เช่น 2401">
+				</div>
+				<div>
+					<label class="field" for="nbName">ชื่อสาขา</label>
+					<input type="text" id="nbName" autocomplete="off" placeholder="เช่น บางนา 3">
+				</div>
+			</div>
+			<button class="btn" id="btnAddBranch" style="margin-top:12px">เพิ่มสาขา</button>
+		</div>
+		<div class="card">
+			<h2 id="branchCount">รายชื่อสาขา</h2>
+			<input type="text" id="branchSearch" autocomplete="off" placeholder="ค้นหารหัสหรือชื่อ">
+			<div id="branchListView" style="margin-top:8px"></div>
+		</div>
+	</section>
+
 	<!-- Review rules (admin) -->
 	<section class="screen" id="scrRuleReview">
 		<div class="card">
@@ -395,6 +420,7 @@
 			<h2>สาขา</h2>
 			<input type="text" id="branchInput" list="branchList" inputmode="numeric" autocomplete="off" placeholder="พิมพ์หรือเลือกรหัสสาขา">
 			<datalist id="branchList"></datalist>
+			<datalist id="branchMasterList"></datalist>
 			<div class="tip">แสดงเฉพาะสาขาที่มีกติกาเปิดใช้งานวันนี้</div>
 		</div>
 
@@ -470,7 +496,7 @@
 				<button type="button" class="chip" data-scope="mine">ของฉัน</button>
 			</div>
 			<label class="field" for="histBranch">สาขา (เว้นว่าง = ทุกสาขา)</label>
-			<input type="text" id="histBranch" list="branchList" inputmode="numeric" autocomplete="off">
+			<input type="text" id="histBranch" list="branchMasterList" autocomplete="off">
 			<label class="field" for="histDate">วันที่</label>
 			<input type="text" id="histDate" placeholder="dd/mm/yyyy (เว้นว่าง = ทั้งหมด)" autocomplete="off">
 		</div>
@@ -544,6 +570,7 @@
 		pendingStaff: [],
 		ruleRows: [],
 		stock: null,
+		branches: [],
 	};
 
 	const $ = (id) => document.getElementById(id);
@@ -653,6 +680,9 @@
 	function buildRules(sheets) {
 		const ruleRows = rowsToObjects(sheets[0]);
 		state.ruleRows = ruleRows;
+		state.branches = rowsToObjects(sheets[2])
+			.map((b) => ({ code: String(b.branch_code || '').trim(), name: String(b.branch_name || '').trim() }))
+			.filter((b) => b.code);
 		const gifts = {};
 		rowsToObjects(sheets[1]).forEach((g) => { gifts[String(g.gift_id)] = g; });
 		state.gifts = gifts;
@@ -691,9 +721,24 @@
 		return state.rules.filter((r) => r.branchCode === state.branchCode);
 	}
 
+	function branchName(code) {
+		const b = state.branches.find((x) => x.code === String(code));
+		return b ? b.name : '';
+	}
+
+	function branchOption(code) {
+		const n = branchName(code);
+		return '<option value="' + esc(code) + '"' + (n ? ' label="' + esc(code + ' ' + n) + '"' : '') + '>' + esc(n) + '</option>';
+	}
+
+	function isKnownBranch(code) {
+		return !state.branches.length || state.branches.some((b) => b.code === String(code));
+	}
+
 	function renderBranchList() {
 		const codes = [...new Set(state.rules.map((r) => r.branchCode))].sort();
-		$('branchList').innerHTML = codes.map((c) => '<option value="' + esc(c) + '"></option>').join('');
+		$('branchList').innerHTML = codes.map(branchOption).join('');
+		$('branchMasterList').innerHTML = state.branches.map((b) => branchOption(b.code)).join('');
 	}
 
 	function setBranch(code) {
@@ -979,6 +1024,7 @@
 			+ (state.role === 'admin'
 				? '<button class="btn secondary" id="btnRuleReview">อนุมัติกติกา' + (n ? ' (' + n + ')' : '') + '</button>'
 				+ '<button class="btn secondary" id="btnApprove">อนุมัติผู้ใช้</button>'
+				+ '<button class="btn secondary" id="btnBranches">จัดการสาขา</button>'
 				: '')
 			+ '</div>'
 		);
@@ -987,6 +1033,7 @@
 		if (state.role === 'admin') {
 			$('btnApprove').addEventListener('click', openApprove);
 			$('btnRuleReview').addEventListener('click', openRuleReview);
+			$('btnBranches').addEventListener('click', openBranches);
 		}
 		fitBottomPadding();
 		$('btnAnalyze').addEventListener('click', analyze);
@@ -1085,11 +1132,25 @@
 		$('rfStockList').querySelectorAll('input[data-b]').forEach((el) => { keep[el.dataset.b] = el.value; });
 		const branches = parseBranches($('rfBranches').value);
 		$('rfStockList').innerHTML = branches.length
-			? branches.map((b) => '<div class="stock-row"><span>สาขา ' + esc(b) + '</span>'
+			? branches.map((b) => '<div class="stock-row"><span>สาขา ' + esc(b) + (branchName(b) ? ' ' + esc(branchName(b)) : '') + '</span>'
 				+ '<input type="number" inputmode="numeric" min="0" data-b="' + esc(b) + '" value="' + esc(keep[b] || '') + '" placeholder="ชิ้น"></div>').join('')
 			: '<div class="muted" style="margin-top:8px">กรอกรหัสสาขาด้านบนก่อน</div>';
 	}
 	$('rfBranches').addEventListener('input', renderStockInputs);
+	$('rfBranchPick').addEventListener('change', () => {
+		const v = $('rfBranchPick').value.trim();
+		if (!v) return;
+		if (!isKnownBranch(v)) {
+			showError('ไม่พบสาขา "' + v + '" ในรายชื่อสาขา');
+			return;
+		}
+		showError('');
+		const list = parseBranches($('rfBranches').value);
+		if (!list.includes(v)) list.push(v);
+		$('rfBranches').value = list.join(', ');
+		$('rfBranchPick').value = '';
+		renderStockInputs();
+	});
 	$('rfType').addEventListener('change', updateRuleFormFields);
 	$('rfGift').addEventListener('change', updateRuleFormFields);
 
@@ -1140,6 +1201,11 @@
 
 		const errors = [];
 		if (!branches.length) errors.push('รหัสสาขา');
+		const unknown = branches.filter((b) => !isKnownBranch(b));
+		if (unknown.length) {
+			showError('ไม่พบสาขาในรายชื่อสาขา: ' + unknown.join(', '));
+			return;
+		}
 		if (!name) errors.push('ชื่อกติกา');
 		if (type !== 'activity' && !(threshold > 0)) errors.push('เกณฑ์');
 		if (type === 'sku_purchase' && !sku) errors.push('รหัสสินค้า');
@@ -1329,7 +1395,7 @@
 			};
 			return '<div class="card"><h2>' + esc(giftLabel(g)) + '</h2>'
 				+ '<table class="stock-table"><tr><th>สาขา</th><th>รับ</th><th>แจก</th><th>คงเหลือ</th></tr>'
-				+ list.map((c) => tr(c.branch, c.received + c.adjusted, c.given)).join('')
+				+ list.map((c) => tr(c.branch + (branchName(c.branch) ? ' ' + branchName(c.branch) : ''), c.received + c.adjusted, c.given)).join('')
 				+ (list.length > 1 ? tr('รวม ' + list.length + ' สาขา', tot.in, tot.out, 'total') : '')
 				+ '</table></div>';
 		}).join('');
@@ -1348,6 +1414,10 @@
 		const type = $('saType').value;
 		const qty = parseInt($('saQty').value, 10);
 		const note = noFormula($('saNote').value);
+		if (branch && !isKnownBranch(branch)) {
+			showError('ไม่พบสาขา "' + branch + '" ในรายชื่อสาขา');
+			return;
+		}
 		if (!branch || !giftId || !qty || (type === 'receive' && qty < 0)) {
 			showError('กรุณากรอกสาขา ของแถม และจำนวน (รับเข้าต้องเป็นค่าบวก)');
 			return;
@@ -1363,6 +1433,64 @@
 			showStockScreen();
 		} catch (e) {
 			showStockScreen();
+			showError(e.message);
+		}
+	});
+
+	/* ---------- Branches (admin) ---------- */
+
+	function showBranchesScreen() {
+		show('scrBranches');
+		setBottom('<button class="btn secondary" id="btnBack">กลับไปหน้าแจก</button>');
+		$('btnBack').addEventListener('click', showFormScreen);
+	}
+
+	async function openBranches() {
+		showError('');
+		setLoading('กำลังโหลด...');
+		try {
+			await reloadData();
+		} catch (e) {
+			showError(e.message);
+		}
+		renderBranchesView();
+		showBranchesScreen();
+	}
+
+	function renderBranchesView() {
+		const q = $('branchSearch').value.trim().toLowerCase();
+		const list = state.branches.filter((b) => !q || b.code.toLowerCase().includes(q) || b.name.toLowerCase().includes(q));
+		$('branchCount').textContent = 'รายชื่อสาขา (' + state.branches.length.toLocaleString() + ')';
+		$('branchListView').innerHTML = list.length
+			? list.slice(0, 100).map((b) => '<div class="hist-item"><span class="hist-title">' + esc(b.code) + '</span> <span class="hist-meta">' + esc(b.name) + '</span></div>').join('')
+				+ (list.length > 100 ? '<div class="muted" style="margin-top:8px">แสดง 100 จาก ' + list.length.toLocaleString() + ' รายการ พิมพ์ค้นหาเพื่อกรอง</div>' : '')
+			: '<div class="muted">ไม่พบสาขา</div>';
+	}
+	$('branchSearch').addEventListener('input', renderBranchesView);
+
+	$('btnAddBranch').addEventListener('click', async () => {
+		showError('');
+		const code = noFormula($('nbCode').value);
+		const name = noFormula($('nbName').value);
+		if (!code || !name) {
+			showError('กรุณากรอกรหัสและชื่อสาขา');
+			return;
+		}
+		if (state.branches.some((b) => b.code === code)) {
+			showError('มีรหัสสาขา ' + code + ' อยู่แล้ว');
+			return;
+		}
+		if (!confirm('เพิ่มสาขา ' + code + ' ' + name + '?')) return;
+		setLoading('กำลังบันทึก...');
+		try {
+			await api('addBranch', { branchTail: JSON.stringify([code, name]).slice(1, -1) });
+			$('nbCode').value = '';
+			$('nbName').value = '';
+			await reloadData();
+			renderBranchesView();
+			showBranchesScreen();
+		} catch (e) {
+			showBranchesScreen();
 			showError(e.message);
 		}
 	});
@@ -1574,7 +1702,9 @@
 			});
 			const aiError = Number(data.aiStatus) !== 200 || !data.ai;
 			const ai = aiError ? EMPTY_AI : data.ai;
-			const billNo = ai.bill.bill_no ? String(ai.bill.bill_no).replace(/\s+/g, '') : '';
+			const billNo = ai.bill.bill_no
+				? String(ai.bill.bill_no).replace(/^\s*BNO\s*:?\s*/i, '').replace(/\s+/g, '')
+				: '';
 			state.analysis = {
 				rule,
 				ai,
